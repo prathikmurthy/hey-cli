@@ -16,14 +16,6 @@ No Go required. One line downloads a release binary, puts it on your `PATH`, and
 curl -fsSL https://raw.githubusercontent.com/prathikmurthy/hey-cli/main/scripts/install.sh | bash
 ```
 
-If the repo is **private**, export a GitHub token (repo scope) so the installer can fetch release assets via the API:
-
-```bash
-export GH_TOKEN=ghp_…   # or GITHUB_TOKEN
-curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-  https://raw.githubusercontent.com/prathikmurthy/hey-cli/main/scripts/install.sh | bash
-```
-
 Then **open a new terminal** (or `exec $SHELL -l`) and run:
 
 ```bash

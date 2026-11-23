@@ -120,7 +120,7 @@ resolve_tag() {
     echo "hey install: could not resolve latest release for ${REPO}" >&2
     echo "  Publish a GitHub Release (tag v*), or set HEY_VERSION=vX.Y.Z / use --from-source." >&2
     if [[ -z "$(gh_token)" ]]; then
-      echo "  Private repo? export GH_TOKEN=… (or GITHUB_TOKEN) and retry." >&2
+      echo "  Rate-limited or private fork? export GH_TOKEN=… (or GITHUB_TOKEN) and retry." >&2
     fi
     exit 1
   fi
@@ -181,7 +181,7 @@ download_binary() {
       echo "hey install: download failed: ${name}" >&2
       echo "  Expected asset on release ${tag}." >&2
       if [[ -z "$(gh_token)" ]]; then
-        echo "  Private repo? export GH_TOKEN=… (classic token with repo scope) and retry." >&2
+        echo "  Rate-limited or private fork? export GH_TOKEN=… and retry." >&2
       fi
       exit 1
     fi
