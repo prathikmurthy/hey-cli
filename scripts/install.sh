@@ -80,14 +80,30 @@ need_cmd() {
   }
 }
 
-# Optional auth for private repos: GH_TOKEN or GITHUB_TOKEN.
+gh_token() {
+  echo "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+}
+
+# JSON/API calls (releases metadata).
 curl_gh() {
   local args=(-fsSL)
-  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  local token
+  token="$(gh_token)"
   if [[ -n "$token" ]]; then
-    args+=(-H "Authorization: Bearer ${token}" -H "Accept: application/vnd.github+json")
+    args+=(-H "Authorization: Bearer ${token}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
   fi
   curl "${args[@]}" "$@"
+}
+
+# Binary asset download. Private repos need the releases/assets API + octet-stream.
+curl_gh_asset() {
+  local url="$1" out="$2"
+  local args=(-fsSL) token
+  token="$(gh_token)"
+  if [[ -n "$token" ]]; then
+    args+=(-H "Authorization: Bearer ${token}" -H "Accept: application/octet-stream" -H "X-GitHub-Api-Version: 2022-11-28")
+  fi
+  curl "${args[@]}" "$url" -o "$out"
 }
 
 resolve_tag() {
@@ -103,7 +119,7 @@ resolve_tag() {
   if [[ -z "$tag" ]]; then
     echo "hey install: could not resolve latest release for ${REPO}" >&2
     echo "  Publish a GitHub Release (tag v*), or set HEY_VERSION=vX.Y.Z / use --from-source." >&2
-    if [[ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
+    if [[ -z "$(gh_token)" ]]; then
       echo "  Private repo? export GH_TOKEN=… (or GITHUB_TOKEN) and retry." >&2
     fi
     exit 1
@@ -111,19 +127,36 @@ resolve_tag() {
   echo "$tag"
 }
 
-asset_url() {
-  local tag="$1" os="$2" arch="$3"
-  # Expected asset: hey_<tag>_<os>_<arch>.tar.gz  (tag may include leading v)
-  local ver="${tag#v}"
-  echo "https://github.com/${REPO}/releases/download/${tag}/hey_${ver}_${os}_${arch}.tar.gz"
+# Print "api_url<TAB>browser_url" for the matching asset, or empty.
+find_asset() {
+  local tag="$1" name="$2"
+  local api="https://api.github.com/repos/${REPO}/releases/tags/${tag}"
+  # Prefer python for reliable JSON; fall back to sed.
+  if command -v python3 >/dev/null 2>&1; then
+    curl_gh "$api" | python3 -c '
+import json,sys
+name=sys.argv[1]
+r=json.load(sys.stdin)
+for a in r.get("assets",[]):
+  if a.get("name")==name:
+    print(a.get("url","")+"\t"+a.get("browser_download_url",""))
+    break
+' "$name"
+    return
+  fi
+  local json
+  json="$(curl_gh "$api")"
+  # Fragile sed fallback: find the asset block containing the name.
+  printf '%s' "$json" | tr '\n' ' ' | sed -n "s/.*\"name\"[[:space:]]*:[[:space:]]*\"${name}\"[^\"]*\"url\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\"[^\"]*\"browser_download_url\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1\t\\2/p" | head -1
 }
 
 download_binary() {
-  local tag os arch url tmp dir
+  local tag os arch ver name pair api_url browser_url tmp found
   tag="$(resolve_tag "$VERSION")"
   os="$(os_name)"
   arch="$(arch_name)"
-  url="$(asset_url "$tag" "$os" "$arch")"
+  ver="${tag#v}"
+  name="hey_${ver}_${os}_${arch}.tar.gz"
   need_cmd curl
   need_cmd tar
 
@@ -131,18 +164,31 @@ download_binary() {
   trap 'rm -rf "$tmp"' RETURN
 
   echo "Downloading hey ${tag} (${os}/${arch})…"
-  if ! curl_gh "$url" -o "${tmp}/hey.tgz"; then
-    echo "hey install: download failed: $url" >&2
-    echo "  Assets should look like hey_${tag#v}_${os}_${arch}.tar.gz" >&2
-    if [[ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
-      echo "  Private repo? export GH_TOKEN=… and retry." >&2
-    fi
-    exit 1
+  pair="$(find_asset "$tag" "$name" || true)"
+  api_url="${pair%%$'\t'*}"
+  browser_url="${pair#*$'\t'}"
+  if [[ -z "$api_url" && -z "$browser_url" ]]; then
+    browser_url="https://github.com/${REPO}/releases/download/${tag}/${name}"
   fi
+
+  if [[ -n "$(gh_token)" && -n "$api_url" ]]; then
+    if ! curl_gh_asset "$api_url" "${tmp}/hey.tgz"; then
+      echo "hey install: API asset download failed for ${name}" >&2
+      exit 1
+    fi
+  else
+    if ! curl -fsSL "${browser_url:-https://github.com/${REPO}/releases/download/${tag}/${name}}" -o "${tmp}/hey.tgz"; then
+      echo "hey install: download failed: ${name}" >&2
+      echo "  Expected asset on release ${tag}." >&2
+      if [[ -z "$(gh_token)" ]]; then
+        echo "  Private repo? export GH_TOKEN=… (classic token with repo scope) and retry." >&2
+      fi
+      exit 1
+    fi
+  fi
+
   tar -xzf "${tmp}/hey.tgz" -C "$tmp"
   if [[ ! -f "${tmp}/hey" ]]; then
-    # Allow a nested single file named hey anywhere in the archive.
-    local found
     found="$(find "$tmp" -type f -name hey | head -1)"
     if [[ -z "$found" ]]; then
       echo "hey install: archive did not contain hey binary" >&2
