@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build -o /tmp/hey ./cmd/hey
+      - name: Install dry-run
+        run: |
+          chmod +x scripts/install.sh
+          ./scripts/install.sh --dry-run --from-source
+          /tmp/hey install --dry-run
+          /tmp/hey --help
+          bash -n scripts/install.sh
+          bash -n shell/hey.bash
