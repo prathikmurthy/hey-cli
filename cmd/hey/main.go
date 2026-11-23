@@ -11,11 +11,13 @@ import (
 	"github.com/prathikmurthy/hey-cli/internal/config"
 	heyctx "github.com/prathikmurthy/hey-cli/internal/context"
 	"github.com/prathikmurthy/hey-cli/internal/install"
+	"github.com/prathikmurthy/hey-cli/internal/pending"
 	"github.com/prathikmurthy/hey-cli/internal/prompt"
+	"github.com/prathikmurthy/hey-cli/internal/style"
 	"github.com/prathikmurthy/hey-cli/shell"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -38,19 +40,18 @@ func run(args []string) int {
 		return cmdInstall(args[1:])
 	}
 
-	fill := false
-	explain := false
+	capture := false // machine-readable for shell widgets
 	printOnly := false
 	var questionParts []string
+	modelFlag := ""
+	persistModel := false
 
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
-		case "--fill":
-			fill = true
-		case "--explain":
-			explain = true
-		case "--print":
+		case "--fill", "--capture":
+			capture = true
+		case "--explain", "--print":
 			printOnly = true
 		case "--":
 			questionParts = append(questionParts, args[i+1:]...)
@@ -61,11 +62,8 @@ func run(args []string) int {
 				return 2
 			}
 			i++
-			cfg, _ := config.Load()
-			cfg.Model = args[i]
-			_ = config.Save(cfg)
-			fmt.Println("model set to", cfg.Model)
-			return 0
+			modelFlag = args[i]
+			persistModel = true // persist unless a question follows
 		default:
 			if strings.HasPrefix(a, "-") {
 				fmt.Fprintf(os.Stderr, "hey: unknown flag %s\n", a)
@@ -77,19 +75,26 @@ func run(args []string) int {
 	}
 
 	question := strings.TrimSpace(strings.Join(questionParts, " "))
+	if question != "" {
+		persistModel = false // one-shot override when asking
+	}
+	if persistModel && modelFlag != "" {
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hey: config: %v\n", err)
+			return 1
+		}
+		cfg.Model = modelFlag
+		if err := config.Save(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "hey: config: %v\n", err)
+			return 1
+		}
+		fmt.Println("model set to", cfg.Model)
+		return 0
+	}
 	if question == "" {
 		fmt.Fprintln(os.Stderr, "hey: missing question — try: hey how do I merge this")
 		return 2
-	}
-
-	// Default interactive path from shell wrappers uses --fill.
-	// Bare invocation without --fill uses explain/print output.
-	if !fill && !explain {
-		explain = true
-	}
-	if printOnly {
-		explain = true
-		fill = false
 	}
 
 	cfg, err := config.Load()
@@ -98,34 +103,61 @@ func run(args []string) int {
 		return 1
 	}
 
-	bundle := heyctx.Collect(question, cfg.HistoryLines)
-	ctxBlock := bundle.Format()
-
-	var promptText string
-	if fill {
-		promptText = prompt.ForFill(ctxBlock)
-	} else {
-		promptText = prompt.ForExplain(ctxBlock)
+	model := modelFlag
+	if model == "" {
+		model = cfg.Model
 	}
 
-	out, err := agent.Ask(promptText, cfg.Model)
+	bundle := heyctx.Collect(question, cfg.HistoryLines)
+	ctxBlock := bundle.Format()
+	promptText := prompt.ForSuggest(ctxBlock)
+
+	out, err := agent.Ask(promptText, model)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "hey:", err)
 		return 1
 	}
 
-	if fill {
-		cmd := prompt.ExtractCommand(out)
-		if cmd == "" {
-			fmt.Fprintln(os.Stderr, "hey: model returned no command")
-			return 1
-		}
-		fmt.Println(cmd)
-		return 0
+	sug := prompt.ParseSuggestion(out)
+	if sug.Command == "" {
+		fmt.Fprintln(os.Stderr, "hey: model returned no command")
+		return 1
 	}
 
-	fmt.Println(out)
-	return 0
+	integration := os.Getenv("HEY_INTEGRATION") != ""
+	if os.Getenv("HEY_CAPTURE") != "" {
+		capture = true
+	}
+
+	switch {
+	case capture:
+		// Shell widget / wrapper path: machine-readable stdout only.
+		fmt.Print(prompt.EncodeCapture(sug))
+		_ = pending.Clear()
+		return 0
+	case printOnly:
+		fmt.Println(sug.Command)
+		if sug.Note != "" {
+			style.PrintDim(sug.Note)
+		}
+		_ = pending.Clear()
+		return 0
+	default:
+		// Bare argv: stage for shell precmd/PROMPT_COMMAND hooks, emit OSC,
+		// and print a human fallback (command + dim note).
+		_ = pending.Write(sug)
+		fmt.Fprint(os.Stderr, pending.OSC(sug))
+		fmt.Println(sug.Command)
+		if sug.Note != "" {
+			style.PrintDim(sug.Note)
+		}
+		if !integration {
+			style.PrintDim("tip: source ~/.hey/shell/hey.zsh  (or hey.bash) so the next prompt is filled automatically")
+		} else {
+			style.PrintDim("(filling next prompt…)")
+		}
+		return 0
+	}
 }
 
 func cmdInstall(args []string) int {
@@ -251,9 +283,9 @@ func printHelp() {
 	fmt.Print(`hey — suggest a shell command from a plain-text question (Cursor-backed)
 
 Usage:
-  hey <question...>           Ask and print command + brief explanation
-  hey --fill <question...>    Print only the command (used by shell widgets)
-  hey --print <question...>   Force print/explain mode
+  hey <question...>           Fill the next prompt with a command (+ dim note)
+  hey --fill <question...>    Machine-readable COMMAND/NOTE (shell widgets)
+  hey --print <question...>   Print command + dim note (no prompt fill)
   hey install [--dry-run]     Detect shells and wire up zsh/bash integration
   hey --model <name>          Save default model for agent --model
   hey --version
@@ -261,6 +293,7 @@ Usage:
 Examples:
   hey how do I merge this
   hey --fill how do I undo the last commit
+  hey --model composer-2-fast how do I get new git changes
 
 Auth (Cursor subscription — no OpenAI/Anthropic keys):
   agent login
@@ -270,12 +303,12 @@ Requires the Cursor CLI on PATH:
   curl https://cursor.com/install -fsS | bash
   https://cursor.com/docs/cli/overview
 
-Shell integration (after hey install):
-  zsh  — hey() uses print -z to fill the next prompt; Ctrl+G fills BUFFER
-  bash — hey() stages via history; Ctrl+G fills READLINE_LINE
+Shell integration (one-liner after hey install):
+  source ~/.hey/shell/hey.zsh    # zsh — hey() uses print -z; Ctrl+G fills BUFFER
+  source ~/.hey/shell/hey.bash   # bash — hey() uses editable readline; Ctrl+G fills line
 
-Context collection:
-  Widgets set HEY_HISTORY (recent fc/history lines) and HEY_BUFFER.
-  Outside widgets, hey reads $HISTFILE / ~/.zsh_history / ~/.bash_history.
+Context:
+  Widgets set HEY_HISTORY / HEY_BUFFER. Outside widgets, hey reads history files.
+  Default model: composer-2-fast (override with hey --model or ~/.hey/config.json).
 `)
 }

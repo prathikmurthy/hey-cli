@@ -221,10 +221,13 @@ func InstallWidgets(shells []string, widgetFiles map[string][]byte, heyBin strin
 	cfg.Shells = shells
 	_ = config.Save(cfg)
 
-	fmt.Println("\nReload your shell or open a new terminal, then try:")
-	fmt.Println(`  hey how do I merge this`)
+	fmt.Println("\nReload your shell, or source the widget now:")
+	for _, sh := range shells {
+		fmt.Printf("  source %s/hey.%s\n", share, sh)
+	}
+	fmt.Println(`Then try:  hey how do I merge this`)
 	if runtime.GOOS != "" {
-		fmt.Println("  (zsh/bash widgets also bind Ctrl+G to fill the current line)")
+		fmt.Println("  (Ctrl+G fills the current line from a typed question)")
 	}
 	return nil
 }

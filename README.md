@@ -1,9 +1,11 @@
 # hey
 
-Ask a plain-text question in your terminal; get a suggested shell command filled into your prompt (zsh ZLE / bash readline), powered by your **Cursor** subscription.
+Ask a plain-text question in your terminal; get a suggested shell command **filled into your prompt** (editable, ready to Enter), with an optional **dim/gray** note — powered by your **Cursor** subscription.
 
 ```bash
-hey how do I merge this
+hey how do I get new git changes
+# → next prompt input line:  git pull
+# → dim note under it:       Fetch and merge remote updates.
 ```
 
 ## Install
@@ -19,6 +21,18 @@ git clone https://github.com/prathikmurthy/hey-cli.git
 cd hey-cli
 ./scripts/install.sh
 ```
+
+### One-liner to source (after install)
+
+```bash
+# zsh
+source ~/.hey/shell/hey.zsh
+
+# bash
+source ~/.hey/shell/hey.bash
+```
+
+`hey install` also appends that source to `~/.zshrc` / `~/.bashrc`. Reload the shell or run the one-liner above, then type `hey …`.
 
 Dry-run (no writes):
 
@@ -50,14 +64,12 @@ hey install --yes                 # default shell only
 hey install --shells zsh,bash     # explicit
 ```
 
-After install, reload the shell (`source ~/.zshrc` or open a new terminal).
+| Shell | Prompt fill | Note styling | Keybinding |
+|-------|-------------|--------------|------------|
+| **zsh** | `hey …` uses `print -z` so the **next** prompt input line has the command | ANSI dim (`\033[2m`) on stderr | **Ctrl+G** replaces `$BUFFER` |
+| **bash** | `hey …` opens an **editable** readline line (`read -e -i`) ready to Enter | ANSI dim on stderr | **Ctrl+G** fills `READLINE_LINE` |
 
-| Shell | Prompt fill | Keybinding |
-|-------|-------------|------------|
-| **zsh** | `hey …` uses `print -z` so the next prompt has the command ready to edit/Enter | **Ctrl+G** fills `$BUFFER` |
-| **bash** | `hey …` stages via `history -s` (Up to recall) and prints the command | **Ctrl+G** fills `READLINE_LINE` |
-
-Outside the widget (e.g. scripts), `hey` prints the suggestion to stdout.
+Bare `hey …` (binary, no function) still stages a fill when integration is sourced: it writes `~/.hey/pending` and emits an OSC hint; zsh `precmd` / bash `PROMPT_COMMAND` pick it up. Without sourcing, you get the command + dim note on the terminal and a tip to source the widget.
 
 ## Auth (Cursor — not OpenAI/Anthropic)
 
@@ -80,22 +92,46 @@ If `agent` is missing, hey exits non-zero with a one-line install hint.
 ```bash
 hey how do I merge this
 hey how do I undo the last commit but keep changes
-hey --fill how do I list listening ports    # command only
-hey --print how do I squash the last 3     # command + short explanation
-hey --model gpt-5                          # persist model for agent --model
+hey --fill how do I list listening ports    # machine-readable COMMAND/NOTE
+hey --print how do I squash the last 3      # print only (command + dim note)
+hey --model composer-2-fast                 # persist default model
 ```
 
-Under the hood (fill path):
+### Fill protocol
+
+Shell widgets call `hey --fill`, which prints:
 
 ```text
-agent -p --mode ask --output-format text --trust [--model NAME] "<prompt>"
+COMMAND:git pull
+NOTE:Fetch and merge remote updates.
 ```
+
+The widget parses that, puts `COMMAND` into the input line, and prints `NOTE` with ANSI dim. Default model asks return the same shape.
+
+## Speed
+
+hey optimizes for snappy simple asks (e.g. git how-tos):
+
+- Default model: **`composer-2-fast`** (override with `hey --model` / `~/.hey/config.json`)
+- `agent -p --mode ask --sandbox disabled --trust`
+- Empty `--workspace` (`~/.hey/workspace`) so the CLI does not index your current repo
+- Tight prompt: only `COMMAND` + optional one-line `NOTE`; “do not use tools”
+- Trimmed history context (default **8** lines)
+
+Under the hood:
+
+```text
+agent -p --mode ask --output-format text --trust --sandbox disabled \
+  --workspace ~/.hey/workspace --model composer-2-fast "<prompt>"
+```
+
+Set `HEY_DEBUG=1` to print agent round-trip timing on stderr.
 
 ## Context collection
 
 hey sends recent terminal context with your question:
 
-1. **From widgets** — `HEY_HISTORY` (last ~30 lines from zsh `fc` / bash `history`) and optional `HEY_BUFFER` (current prompt line for Ctrl+G)
+1. **From widgets** — `HEY_HISTORY` (last ~8 lines from zsh `fc` / bash `history`) and optional `HEY_BUFFER` (current prompt line for Ctrl+G)
 2. **Fallback** — `$HISTFILE`, else `~/.zsh_history` / `~/.bash_history` (zsh extended-history prefixes are stripped)
 3. Always includes **cwd** and shell name
 
@@ -107,6 +143,7 @@ Config lives at `~/.hey/config.json` (`model`, `shells`, `history_lines`).
 go build -o hey ./cmd/hey
 ./hey --help
 ./hey install --dry-run
+go test ./...
 # widget sources:
 ls shell/hey.zsh shell/hey.bash
 ```
