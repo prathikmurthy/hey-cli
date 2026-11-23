@@ -72,31 +72,39 @@ func RCPath(shell string) (string, error) {
 		}
 		return filepath.Join(home, ".zshrc"), nil
 	case "bash":
-		// Prefer .bashrc for interactive non-login; ensure .bash_profile sources it on macOS later if needed.
+		// Prefer .bashrc for interactive non-login; ensureBashProfileSourcesRC covers macOS login shells.
 		return filepath.Join(home, ".bashrc"), nil
 	default:
 		return "", fmt.Errorf("unsupported shell: %s", shell)
 	}
 }
 
-// ShellSnippet returns the sourced block for a shell, pointing at shareDir.
-func ShellSnippet(shell, shareDir string) string {
-	switch shell {
-	case "zsh":
-		return fmt.Sprintf("%s\n[[ -f %q ]] && source %q\n%s\n",
-			beginMarker,
-			filepath.Join(shareDir, "hey.zsh"),
-			filepath.Join(shareDir, "hey.zsh"),
-			endMarker)
-	case "bash":
-		return fmt.Sprintf("%s\n[[ -f %q ]] && source %q\n%s\n",
-			beginMarker,
-			filepath.Join(shareDir, "hey.bash"),
-			filepath.Join(shareDir, "hey.bash"),
-			endMarker)
-	default:
+// BinDirGuess returns the directory containing heyBin, or ~/.local/bin.
+func BinDirGuess(heyBin string) string {
+	if heyBin != "" {
+		return filepath.Dir(heyBin)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return ""
 	}
+	return filepath.Join(home, ".local", "bin")
+}
+
+// ShellSnippet returns the sourced block for a shell: PATH + widget.
+func ShellSnippet(shell, shareDir, binDir string) string {
+	widget := filepath.Join(shareDir, "hey."+shell)
+	var b strings.Builder
+	b.WriteString(beginMarker)
+	b.WriteByte('\n')
+	if binDir != "" {
+		b.WriteString(fmt.Sprintf(`export PATH=%q:$PATH`, binDir))
+		b.WriteByte('\n')
+	}
+	b.WriteString(fmt.Sprintf("[[ -f %q ]] && source %q\n", widget, widget))
+	b.WriteString(endMarker)
+	b.WriteByte('\n')
+	return b.String()
 }
 
 // ShareDir is where widget scripts are installed (~/.hey/shell).
@@ -188,6 +196,8 @@ func InstallWidgets(shells []string, widgetFiles map[string][]byte, heyBin strin
 		return err
 	}
 
+	binDir := BinDirGuess(heyBin)
+
 	for _, sh := range shells {
 		name := "hey." + sh
 		data, ok := widgetFiles[name]
@@ -203,14 +213,18 @@ func InstallWidgets(shells []string, widgetFiles map[string][]byte, heyBin strin
 		if err != nil {
 			return err
 		}
-		snippet := ShellSnippet(sh, share)
+		snippet := ShellSnippet(sh, share, binDir)
 		if err := upsertRC(rc, snippet); err != nil {
 			return err
+		}
+		if sh == "bash" {
+			if err := ensureBashProfileSourcesRC(); err != nil {
+				return err
+			}
 		}
 		fmt.Printf("Installed %s integration → %s\n", sh, rc)
 	}
 
-	// Ensure hey is on PATH hint.
 	if heyBin != "" {
 		fmt.Printf("hey binary: %s\n", heyBin)
 	} else if _, err := exec.LookPath("hey"); err != nil {
@@ -221,15 +235,36 @@ func InstallWidgets(shells []string, widgetFiles map[string][]byte, heyBin strin
 	cfg.Shells = shells
 	_ = config.Save(cfg)
 
-	fmt.Println("\nReload your shell, or source the widget now:")
-	for _, sh := range shells {
-		fmt.Printf("  source %s/hey.%s\n", share, sh)
-	}
-	fmt.Println(`Then try:  hey how do I merge this`)
+	fmt.Println("\nDone. Open a new terminal (or run: exec $SHELL -l), then try:")
+	fmt.Println(`  hey how do I merge this`)
 	if runtime.GOOS != "" {
 		fmt.Println("  (Ctrl+G fills the current line from a typed question)")
 	}
 	return nil
+}
+
+func ensureBashProfileSourcesRC() error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	bp := filepath.Join(home, ".bash_profile")
+	data, err := os.ReadFile(bp)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	content := string(data)
+	if strings.Contains(content, ".bashrc") {
+		return nil
+	}
+	block := "\n# >>> hey-cli path >>>\n[[ -f ~/.bashrc ]] && source ~/.bashrc\n# <<< hey-cli path <<<\n"
+	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return os.WriteFile(bp, []byte(content+block), 0o644)
 }
 
 func upsertRC(path, snippet string) error {

@@ -17,7 +17,8 @@ import (
 	"github.com/prathikmurthy/hey-cli/shell"
 )
 
-const version = "0.1.1"
+// version is overridden at release build time via -ldflags "-X main.version=…".
+var version = "0.1.1"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -152,7 +153,8 @@ func run(args []string) int {
 			style.PrintDim(sug.Note)
 		}
 		if !integration {
-			style.PrintDim("tip: source ~/.hey/shell/hey.zsh  (or hey.bash) so the next prompt is filled automatically")
+			style.PrintDim("tip: run  curl -fsSL https://raw.githubusercontent.com/prathikmurthy/hey-cli/main/scripts/install.sh | bash")
+			style.PrintDim("     then open a new terminal (or: exec $SHELL -l) so the prompt fills automatically")
 		} else {
 			style.PrintDim("(filling next prompt…)")
 		}
@@ -303,9 +305,9 @@ Requires the Cursor CLI on PATH:
   curl https://cursor.com/install -fsS | bash
   https://cursor.com/docs/cli/overview
 
-Shell integration (one-liner after hey install):
-  source ~/.hey/shell/hey.zsh    # zsh — hey() uses print -z; Ctrl+G fills BUFFER
-  source ~/.hey/shell/hey.bash   # bash — hey() uses editable readline; Ctrl+G fills line
+Install (no Go required):
+  curl -fsSL https://raw.githubusercontent.com/prathikmurthy/hey-cli/main/scripts/install.sh | bash
+  exec $SHELL -l    # or open a new terminal
 
 Context:
   Widgets set HEY_HISTORY / HEY_BUFFER. Outside widgets, hey reads history files.
