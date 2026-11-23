@@ -34,7 +34,7 @@ func Collect(question string, maxLines int) Bundle {
 		Shell:    filepath.Base(os.Getenv("SHELL")),
 	}
 	if maxLines <= 0 {
-		maxLines = 30
+		maxLines = 8
 	}
 	if raw := os.Getenv("HEY_HISTORY"); raw != "" {
 		b.History = lastNonEmpty(strings.Split(raw, "\n"), maxLines)
@@ -118,30 +118,30 @@ func lastNonEmpty(lines []string, n int) []string {
 // Format returns a compact text block for the model prompt.
 func (b Bundle) Format() string {
 	var sb strings.Builder
-	sb.WriteString("Working directory: ")
+	sb.WriteString("cwd: ")
 	sb.WriteString(b.CWD)
-	sb.WriteString("\n")
+	sb.WriteByte('\n')
 	if b.Shell != "" {
-		sb.WriteString("Shell: ")
+		sb.WriteString("shell: ")
 		sb.WriteString(b.Shell)
-		sb.WriteString("\n")
+		sb.WriteByte('\n')
 	}
 	if len(b.History) > 0 {
-		sb.WriteString("\nRecent terminal history (oldest → newest):\n")
+		sb.WriteString("history:\n")
 		for _, h := range b.History {
-			sb.WriteString("  $ ")
+			sb.WriteString("- ")
 			sb.WriteString(h)
-			sb.WriteString("\n")
+			sb.WriteByte('\n')
 		}
 	}
 	if b.Buffer != "" {
-		sb.WriteString("\nCurrent prompt buffer:\n  ")
+		sb.WriteString("buffer: ")
 		sb.WriteString(b.Buffer)
-		sb.WriteString("\n")
+		sb.WriteByte('\n')
 	}
-	sb.WriteString("\nUser question:\n  ")
+	sb.WriteString("q: ")
 	sb.WriteString(b.Question)
-	sb.WriteString("\n")
+	sb.WriteByte('\n')
 	return sb.String()
 }
 

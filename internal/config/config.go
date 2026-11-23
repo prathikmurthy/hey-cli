@@ -11,7 +11,8 @@ const (
 	AppName     = "hey"
 	ConfigDir   = ".hey"
 	ConfigFile  = "config.json"
-	DefaultHist = 30
+	// DefaultHist is kept small for latency (less prompt tokens).
+	DefaultHist = 8
 )
 
 // Config is the minimal on-disk settings for hey.
