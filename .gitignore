@@ -1,0 +1,4 @@
+/hey
+*.exe
+dist/
+.DS_Store
