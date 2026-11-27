@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/prathikmurthy/hey-cli/internal/agent"
+	heycap "github.com/prathikmurthy/hey-cli/internal/capture"
 	"github.com/prathikmurthy/hey-cli/internal/config"
 	heyctx "github.com/prathikmurthy/hey-cli/internal/context"
 	"github.com/prathikmurthy/hey-cli/internal/install"
@@ -31,6 +34,8 @@ func run(args []string) int {
 	}
 
 	switch args[0] {
+	case "_tee":
+		return cmdTee(args[1:])
 	case "--help", "-h", "help":
 		printHelp()
 		return 0
@@ -109,7 +114,11 @@ func run(args []string) int {
 		model = cfg.Model
 	}
 
-	bundle := heyctx.Collect(question, cfg.HistoryLines)
+	if runDir, err := heycap.RunDir(); err == nil {
+		heycap.PruneStale(runDir, heycap.DefaultPruneMaxAge)
+	}
+
+	bundle := heyctx.Collect(question, cfg.HistoryLines, cfg.OutputLines)
 	ctxBlock := bundle.Format()
 	promptText := prompt.ForSuggest(ctxBlock)
 
@@ -269,6 +278,33 @@ prompt-fill widgets (Ctrl+G) plus an interactive hey() wrapper.
 	return 0
 }
 
+func cmdTee(args []string) int {
+	var outPath, fallbackPath, donePath string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--out":
+			if i+1 < len(args) {
+				i++
+				outPath = args[i]
+			}
+		case "--fallback":
+			if i+1 < len(args) {
+				i++
+				fallbackPath = args[i]
+			}
+		case "--done":
+			if i+1 < len(args) {
+				i++
+				donePath = args[i]
+			}
+		}
+	}
+	// Never die on Ctrl-C / Ctrl-Z so foreground commands can still flush output on interrupt.
+	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTSTP)
+	_ = heycap.Tee(os.Stdin, os.Stdout, outPath, fallbackPath, donePath, heycap.DefaultTeeBufferBytes)
+	return 0
+}
+
 func loadWidgets() (map[string][]byte, error) {
 	out := map[string][]byte{}
 	for _, name := range []string{"hey.zsh", "hey.bash"} {
@@ -310,7 +346,9 @@ Install (no Go required):
   exec $SHELL -l    # or open a new terminal
 
 Context:
-  Widgets set HEY_HISTORY / HEY_BUFFER. Outside widgets, hey reads history files.
+  Shell hooks capture the last non-interactive command's exit code and tail (~40 lines)
+  to ~/.hey/run/ (or read tmux/WezTerm/Kitty scrollback), stripping ANSI codes and
+  redacting secrets. Set HEY_CAPTURE_OUTPUT=0 to disable command output capture.
   Default model: composer-2-fast (override with hey --model or ~/.hey/config.json).
 `)
 }

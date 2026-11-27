@@ -107,9 +107,29 @@ The widget parses that, puts `COMMAND` into the input line, and prints `NOTE` wi
 - Default model: **`composer-2-fast`**
 - `agent -p --mode ask --sandbox disabled --trust --workspace ~/.hey/workspace`
 - Tight prompt: only `COMMAND` + optional one-line `NOTE`
-- Trimmed history (default **8** lines)
+- Trimmed history (default **8** lines) and last command output (default **40** lines, max 4 KB)
 
 Set `HEY_DEBUG=1` to print agent round-trip timing on stderr.
+
+## Context & privacy (what is captured)
+
+To diagnose errors (such as a failed `git pull --ff-only` or build error) when you ask `hey what do i do`, `hey` sends compact, sanitized context to the model:
+
+- **Working directory & shell name** (`cwd`, `shell`)
+- **Recent command history** (default 8 lines, secrets redacted)
+- **Last non-`hey` command & exit code** (`last_command`, `last_exit`)
+- **Last command output (~40 lines, capped at 4 KB)**, gathered in this order:
+  1. `HEY_LAST_OUTPUT` env override (if explicitly set)
+  2. Per-shell tail file (`~/.hey/run/out.<pid>`, mode `0600`) captured by `preexec`/`precmd` (zsh) or `DEBUG`/`PROMPT_COMMAND` (bash) via a fast in-memory ring-buffer tee (`hey _tee`) that never blocks the prompt
+  3. Live terminal scrollback when running inside **tmux** (`tmux capture-pane`), **WezTerm** (`wezterm cli get-text`), or **Kitty** (`kitty @ get-text`) — inside tmux/WezTerm, FD teeing is skipped completely
+  4. Recent `~/.hey/last_output` fallback (only if modified within 10 minutes)
+
+### What is NOT captured / privacy guardrails
+
+- **Interactive & TUI commands are skipped** (`vim`, `less`, `ssh`, `top`, `fzf`, `git diff`, `git log`, interactive `git commit`, bare REPLs, `ls`, background `&` jobs, and `hey` itself — so asking `hey` twice keeps the original error)
+- **Sensitive commands & files are skipped** (`env`, `printenv`, `export`, `pass`, `op`, `vault`, `gpg`, `openssl`, and commands referencing `.env`, secrets, tokens, passwords, private keys, `.pem`/`.key`, `.netrc`, `.aws/credentials`, `kubeconfig`)
+- **ANSI stripping & redaction**: all ANSI/OSC escape sequences are stripped; raw `env` dumps are dropped; PEM private keys, API keys/tokens (`sk-...`, `ghp_...`, `AKIA...`, JWTs, `Bearer ...`), URL credentials, and sensitive `KEY=value` lines are redacted before anything leaves your machine
+- **Opt out anytime**: set `export HEY_CAPTURE_OUTPUT=0` in your shell rc to disable command output capture (history + cwd still work)
 
 ## Releases
 
