@@ -13,6 +13,8 @@ const (
 	ConfigFile  = "config.json"
 	// DefaultHist is kept small for latency (less prompt tokens).
 	DefaultHist = 8
+	// DefaultOutputLines is how many recent terminal output lines to include as context.
+	DefaultOutputLines = 40
 )
 
 // Config is the minimal on-disk settings for hey.
@@ -23,6 +25,8 @@ type Config struct {
 	Model string `json:"model,omitempty"`
 	// HistoryLines is how many recent shell history lines to include as context.
 	HistoryLines int `json:"history_lines,omitempty"`
+	// OutputLines is how many recent terminal output lines to include as context.
+	OutputLines int `json:"output_lines,omitempty"`
 }
 
 func Dir() (string, error) {
@@ -42,7 +46,10 @@ func Path() (string, error) {
 }
 
 func Load() (Config, error) {
-	cfg := Config{HistoryLines: DefaultHist}
+	cfg := Config{
+		HistoryLines: DefaultHist,
+		OutputLines:  DefaultOutputLines,
+	}
 	path, err := Path()
 	if err != nil {
 		return cfg, err
@@ -59,6 +66,9 @@ func Load() (Config, error) {
 	}
 	if cfg.HistoryLines <= 0 {
 		cfg.HistoryLines = DefaultHist
+	}
+	if cfg.OutputLines <= 0 {
+		cfg.OutputLines = DefaultOutputLines
 	}
 	return cfg, nil
 }
